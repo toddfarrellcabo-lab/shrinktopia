@@ -3,7 +3,7 @@
 <html lang="en"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
   
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Shrinktopia 26</title>
+  <title>Shrinktopia 28 - Rescue Resize</title>
   <style>
     :root {
       --bg: linear-gradient(180deg, #f7f8fc 0%, #eef2ff 40%, #f7f8fc 100%);
@@ -258,10 +258,10 @@
       <div class="skyline"></div>
       <div class="hero-inner">
         <div class="hero-copy">
-          <div class="version">SHRINKTOPIA 26 · prefix + suffix + blur + ZIP</div>
-          <h1>Shrinktopia 26</h1>
+          <div class="version">SHRINKTOPIA 28 · rescue resize when over target</div>
+          <h1>Shrinktopia 28</h1>
           <p class="tagline">Big creative. Tiny files. City-speed compression with a Sparklight glow.</p>
-          <p>This version chooses the result closest to your hard size target without going over.</p>
+          <p>This version chooses the result closest to your hard size target without going over, then asks about rescue resizing if normal compression misses.</p>
           <p>It includes optional <strong>prefix</strong>, optional <strong>suffix</strong>, optional <strong>blur help</strong>, and <strong>ZIP download</strong>.</p>
         </div>
         <div class="hero-badge">
@@ -559,12 +559,13 @@
     }
 
     function makeRescueScales() {
-      const scales = [0.98, 0.96, 0.95, 0.94, 0.92, 0.90, 0.88, 0.85, 0.82, 0.80, 0.75, 0.70];
+      // Least-destructive first. It only goes lower if the higher scale cannot hit the hard target.
+      const scales = [0.99, 0.98, 0.97, 0.96, 0.95, 0.94, 0.93, 0.92, 0.91, 0.90, 0.88, 0.86, 0.85, 0.83, 0.82, 0.80, 0.78, 0.75, 0.72, 0.70, 0.65, 0.60, 0.55, 0.50];
       return scales;
     }
 
     function confirmRescuePass(item, settings) {
-      const msg = `${item.file.name} is still over the ${settings.targetKb} KB hard target after the normal pass.\n\nRun the next-step rescue pass?\n\nThis keeps the best-looking version under target by trying small size reductions first, then choosing the highest scale and JPEG quality that fits.`;
+      const msg = `${item.file.name} is still over the ${settings.targetKb} KB hard target after the normal pass.\n\nRun the next-step rescue pass?\n\nThis keeps the best-looking version under target by trying tiny resize steps first, then choosing the largest dimensions and highest JPEG quality that fit. This is the least-destructive next step.`;
       return window.confirm(msg);
     }
 
@@ -572,7 +573,7 @@
       const candidates = [];
       const blurPasses = makeBlurPasses(settings);
       const rescueQualities = [];
-      for (let q = settings.startQuality; q >= Math.max(5, settings.minQuality); q--) rescueQualities.push(q);
+      for (let q = settings.startQuality; q >= 1; q--) rescueQualities.push(q);
 
       for (const scale of makeRescueScales()) {
         const scaledCanvas = scaleCanvas(canvas, scale, settings.bgMode);
@@ -747,6 +748,11 @@
         }
 
         const fallback = smallestOver;
+        if (!fallback) {
+          item.downloadBtn.disabled = true;
+          setCardState(item, { cls: 'bad', label: 'Error', text: 'No usable JPEG result could be created for this file.' });
+          return;
+        }
         const url = URL.createObjectURL(fallback.blob);
         if (item.result && item.result.url && item.result.url.startsWith('blob:')) URL.revokeObjectURL(item.result.url);
 
