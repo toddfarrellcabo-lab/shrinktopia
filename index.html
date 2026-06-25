@@ -44,6 +44,10 @@
       backdrop-filter: blur(8px);
     }
     .hero {
+      background-image: url("images/Hero.png");
+      background-position: center;
+      background-size: cover;
+      background-repeat: no-repeat;
       position: relative;
       overflow: hidden;
       padding: 28px;
@@ -282,25 +286,20 @@
       .file-card { grid-template-columns: 1fr; }
       .thumb { width: 100%; height: 190px; }
     }
-  
-    .hero-image{
-      display:block;
-      width:100%;
-      max-width:1700px;
-      aspect-ratio:1700/700;
-      object-fit:cover;
-      object-position:center;
-      margin:0 auto 18px auto;
-      border-radius:14px;
-      border:1px solid var(--border);
-      box-shadow:var(--shadow);
+
+    .hero::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(90deg, rgba(255,255,255,.58), rgba(255,255,255,.18));
+      pointer-events: none;
+      z-index: 1;
     }
 
 </style>
 </head>
 <body>
   <div class="wrap">
-    <img id="heroImage" class="hero-image" src="images/Hero.png" alt="Hero Banner" onerror="this.style.display='none';">
     <div class="hero">
       <div class="skyline"></div>
       <div class="hero-inner">
