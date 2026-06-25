@@ -25,7 +25,7 @@
          Put Hero.png inside an images folder next to this HTML file.
          Expected hero art size: 1700x700 px.
          If the image is missing, the default Shrinktopia gradient still shows underneath. */
-      --custom-hero-image: url("images/Hero.png");
+      --custom-hero-image:;
     }
     * { box-sizing: border-box; }
     body {
@@ -44,7 +44,6 @@
       backdrop-filter: blur(8px);
     }
     .hero {
-      background-image: url("images/Hero.png");
       background-position: center;
       background-size: cover;
       background-repeat: no-repeat;
@@ -52,6 +51,10 @@
       overflow: hidden;
       padding: 28px;
       margin-bottom: 18px;
+      background:
+        radial-gradient(circle at 12% 18%, rgba(57,199,234,.18), transparent 24%),
+        radial-gradient(circle at 88% 12%, rgba(141,59,145,.16), transparent 22%),
+        linear-gradient(135deg, rgba(255,255,255,.97), rgba(247,250,255,.92));
       background-image:
         var(--custom-hero-image),
         radial-gradient(circle at 12% 18%, rgba(57,199,234,.18), transparent 24%),
