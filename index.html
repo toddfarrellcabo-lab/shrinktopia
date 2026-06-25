@@ -287,19 +287,25 @@
       .thumb { width: 100%; height: 190px; }
     }
 
-    .hero::before {
-      content: "";
-      position: absolute;
-      inset: 0;
-      background: linear-gradient(90deg, rgba(255,255,255,.58), rgba(255,255,255,.18));
-      pointer-events: none;
-      z-index: 1;
+    .hero-image {
+      display: block;
+      width: 100%;
+      max-width: 1700px;
+      aspect-ratio: 1700 / 700;
+      object-fit: cover;
+      object-position: center;
+      margin: 0 auto 18px auto;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow);
+      background: var(--card);
     }
 
 </style>
 </head>
 <body>
   <div class="wrap">
+    <img id="heroImage" class="hero-image" src="images/Hero.png" alt="Shrinktopia hero banner" onerror="this.style.display='none';">
     <div class="hero">
       <div class="skyline"></div>
       <div class="hero-inner">
