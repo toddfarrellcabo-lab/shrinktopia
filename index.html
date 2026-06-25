@@ -475,7 +475,7 @@
             <option value="auto">Auto same-size rescue</option>
             <option value="stop">Save closest same-size result</option>
           </select>
-          <div class="hint">Normal compression runs first. Then Shrinktopia asks once whether to run same-size rescue on all leftovers.</div>
+          <div class="hint">Normal compression runs first. Then Shrinktopia asks once whether to rescue all leftovers or skip rescue.</div>
         </div>
         <div class="field slider-field resize-controls-disabled" title="Resize rescue is disabled to preserve exact ad dimensions.">
           <label for="minScalePercent">Resize rescue disabled <span id="minScaleLabel" class="live-label">100% • Exact dimensions</span></label>
@@ -544,7 +544,7 @@
       <div class="footer-note">
         ZIP download includes every finished file, including skipped originals. Rescue keeps exact uploaded pixel dimensions; if a file cannot hit the target without resizing, the closest same-size result is saved. Prefix and suffix can both be left blank.
       </div>
-      <div class="app-version">Shrinktopia v31.7</div>
+      <div class="app-version">Shrinktopia v31.8</div>
     </div>
 
     <div class="grid" id="results"></div>
@@ -624,8 +624,8 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       const allowBlur = document.getElementById('allowBlur').value;
       const maxBlurPx = Math.max(0, Math.min(1, parseFloat(document.getElementById('maxBlurPx').value || '0.30')));
       const rescueMode = document.getElementById('rescueMode') ? document.getElementById('rescueMode').value : 'ask';
-      const minScalePercent = document.getElementById('minScalePercent') ? Math.max(50, Math.min(100, parseInt(document.getElementById('minScalePercent').value || '95', 10))) : 50;
-      const minScale = minScalePercent / 100;
+      const minScalePercent = 100;
+      const minScale = 1;
       const zipName = sanitizeZipName(document.getElementById('zipName').value);
 
       return {
@@ -696,7 +696,6 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       const maxQ = document.getElementById('startQuality')?.value || 100;
       const blur = document.getElementById('maxBlurPx')?.value || 0;
       const blurMode = document.getElementById('allowBlur')?.value || 'off';
-      const scale = document.getElementById('minScalePercent')?.value || 95;
       const rescue = document.getElementById('rescueMode')?.value || 'ask';
       const target = document.getElementById('targetKb')?.value || 60;
       const floor = document.getElementById('preferredFloorKb')?.value || 52;
@@ -710,13 +709,13 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       if (minLabel) minLabel.textContent = `${minQ} / 100 • ${qualityLabel(minQ)}`;
       if (maxLabel) maxLabel.textContent = `${maxQ} / 100 • ${qualityLabel(maxQ)}`;
       if (blurLabelEl) blurLabelEl.textContent = `${Number(blur).toFixed(2)} px • ${blurMode === 'off' ? 'Disabled' : blurLabel(blur)}`;
-      if (scaleLabelEl) scaleLabelEl.textContent = `${scale}% • ${scaleLabel(scale)}`;
+      if (scaleLabelEl) scaleLabelEl.textContent = `100% • Exact dimensions`;
 
       if (strategy) {
-        const rescueText = rescue === 'auto' ? 'Auto rescue enabled' : rescue === 'ask' ? 'Ask after normal pass' : 'Stop if target is missed';
+        const rescueText = rescue === 'auto' ? 'Auto same-size rescue enabled' : rescue === 'ask' ? 'Ask once after normal pass' : 'Save closest same-size result';
         const blurText = blurMode === 'off' ? 'Blur disabled' : `Blur allowed up to ${Number(blur).toFixed(2)}px (${blurLabel(blur)})`;
         const expected = Number(minQ) >= 60 ? 'Very Good to Excellent' : Number(minQ) >= 40 ? 'Good' : Number(minQ) >= 20 ? 'Aggressive but usable' : 'Extreme / visible loss likely';
-        strategy.innerHTML = `✓ Target ${floor}–${target} KB<br>✓ Quality ${maxQ} → ${minQ} (${qualityLabel(minQ)} floor)<br>✓ ${blurText}<br>✓ ${rescueText}${rescue === 'stop' ? '' : `<br>✓ Preserve exact dimensions / no resize
+        strategy.innerHTML = `✓ Target ${floor}–${target} KB<br>✓ Quality ${maxQ} → ${minQ} (${qualityLabel(minQ)} floor)<br>✓ ${blurText}<br>✓ ${rescueText}<br>✓ Preserve exact dimensions / no resize<br><strong>Expected Visual Quality:</strong> ${expected}`;
       }
     }
 
@@ -909,27 +908,24 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       const rescueQualities = [];
       for (let q = settings.startQuality; q >= 1; q--) rescueQualities.push(q);
 
-      for (const scale of makeRescueScales(settings)) {
-        const scaledCanvas = scaleCanvas(canvas, scale, settings.bgMode);
+      // Same-size rescue: intentionally no scale/resize. Canvas dimensions stay exact.
+      for (const blur of blurPasses) {
+        const testCanvas = maybeBlurCanvas(canvas, blur);
 
-        for (const blur of blurPasses) {
-          const testCanvas = maybeBlurCanvas(scaledCanvas, blur);
+        for (const q of rescueQualities) {
+          const blob = await canvasToBlob(testCanvas, q / 100);
+          if (!blob || blob.size > settings.targetBytes) continue;
 
-          for (const q of rescueQualities) {
-            const blob = await canvasToBlob(testCanvas, q / 100);
-            if (!blob || blob.size > settings.targetBytes) continue;
-
-            candidates.push({
-              blob,
-              quality: q,
-              blur,
-              scale,
-              width: testCanvas.width,
-              height: testCanvas.height,
-              size: blob.size,
-              distanceToTarget: Math.abs(settings.targetBytes - blob.size)
-            });
-          }
+          candidates.push({
+            blob,
+            quality: q,
+            blur,
+            scale: 1,
+            width: testCanvas.width,
+            height: testCanvas.height,
+            size: blob.size,
+            distanceToTarget: Math.abs(settings.targetBytes - blob.size)
+          });
         }
       }
       return candidates;
@@ -1006,109 +1002,357 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     }
 
     function askBatchRescueChoice(leftovers, settings) {
-      const names = leftovers.slice(0, 8).map(item => `• ${item.file.name}`).join('
-');
-      const more = leftovers.length > 8 ? `
-…and ${leftovers.length - 8} more` : '';
-      const message =
-        `${leftovers.length} file(s) are still over the ${settings.targetKb} KB hard target after the normal pass.
-
-` +
-        `Run SAME-SIZE rescue for all leftover files?
-
-` +
-        `This keeps exact pixel dimensions. It will not resize 1080×1350 to 1069×1337.
-
-` +
-        `${names}${more}
-
-` +
-        `OK = run same-size rescue on all leftovers
-` +
+      if (!leftovers.length) return 'skip';
+      const names = leftovers.slice(0, 8).map(item => `• ${item.file.name}`).join('\n');
+      const more = leftovers.length > 8 ? `\n…and ${leftovers.length - 8} more` : '';
+      const msg = `${leftovers.length} file(s) are still over the ${settings.targetKb} KB hard target after the normal pass.\n\n` +
+        `Run SAME-SIZE rescue for ALL leftovers?\n\n` +
+        `This keeps exact pixel dimensions. It will not resize 1080×1350 to 1069×1337.\n\n` +
+        `${names}${more}\n\n` +
+        `OK = run same-size rescue on all leftovers\n` +
         `Cancel = save the closest same-size results`;
-      return confirm(message) ? 'all' : 'skip';
+      return window.confirm(msg) ? 'all' : 'skip';
     }
 
     async function runRescueForItem(item, settings) {
-      const source = item.source || await loadImageFromFile(item.file);
-      item.source = source;
+      setCardState(item, { cls: 'warn', label: 'Same-size rescue', text: 'Trying extra compression passes while preserving exact pixel dimensions...' });
 
-      const originalW = source.width;
-      const originalH = source.height;
-      const targetBytes = settings.targetKb * 1024;
-      const minQ = settings.minQuality / 100;
-      const startQ = settings.startQuality / 100;
+      const img = await loadImage(item.file, item);
+      const baseCanvas = renderToCanvas(img, settings.bgMode);
+      const rescueCandidates = await scanResizeRescueCandidates(baseCanvas, settings);
+      const rescue = chooseBestRescueCandidate(rescueCandidates);
 
-      let bestUnder = null;
-      let closest = null;
+      if (rescue) {
+        const url = URL.createObjectURL(rescue.blob);
+        if (item.result && item.result.url && item.result.url.startsWith('blob:')) URL.revokeObjectURL(item.result.url);
 
-      const blurValues = [0];
-      if (settings.allowBlur !== 'off') {
-        const maxBlur = Math.max(0, Number(settings.maxBlurPx || 0));
-        if (maxBlur > 0) {
-          blurValues.push(Math.min(maxBlur, 0.15));
-          blurValues.push(Math.min(maxBlur, 0.30));
-          if (maxBlur > 0.30) blurValues.push(maxBlur);
-        }
-      }
-
-      const qualitySteps = [];
-      for (let q = Math.round(startQ * 100); q >= Math.round(minQ * 100); q -= 1) {
-        qualitySteps.push(q / 100);
-      }
-      if (!qualitySteps.includes(minQ)) qualitySteps.push(minQ);
-
-      for (const blur of blurValues) {
-        for (const quality of qualitySteps) {
-          const blob = await renderJpeg(source, {
-            width: originalW,
-            height: originalH,
-            quality,
-            bgMode: settings.bgMode,
-            blur
-          });
-
-          const candidate = {
-            blob,
-            bytes: blob.size,
-            width: originalW,
-            height: originalH,
-            quality,
-            scale: 1,
-            blur,
-            filename: buildOutputFilename(item.file),
-            ok: blob.size <= targetBytes,
-            mode: blur > 0 ? 'same-size rescue + blur' : 'same-size rescue'
-          };
-
-          if (!closest || blob.size < closest.bytes) closest = candidate;
-
-          if (blob.size <= targetBytes) {
-            if (!bestUnder || quality > bestUnder.quality || blob.size > bestUnder.bytes) bestUnder = candidate;
-            break;
-          }
-        }
-      }
-
-      const result = bestUnder || closest;
-      item.result = result;
-
-      if (result.ok) {
+        item.result = {
+          blob: rescue.blob,
+          filename: buildOutputFilename(item.file.name, settings.prefixText, settings.nameSuffix, true),
+          quality: rescue.quality,
+          blur: rescue.blur,
+          scale: 1,
+          ok: true,
+          url,
+          mode: 'rescue',
+          distance: rescue.distanceToTarget
+        };
+        item.card.querySelector('.resultSize').textContent = `${bytesToKb(rescue.blob.size)} KB`;
+        item.card.querySelector('.quality').textContent = `Q${rescue.quality}`;
+        item.card.querySelector('.blur').textContent = `${rescue.blur ? rescue.blur.toFixed(2) + 'px' : '0'}`;
+        item.card.querySelector('.mode').textContent = 'Same-size rescue';
+        item.card.querySelector('.dims').textContent = `${rescue.width} × ${rescue.height}`;
+        item.card.querySelector('.distance').textContent = `${bytesToKb(rescue.distanceToTarget)} KB`;
+        item.downloadBtn.disabled = false;
         setCardState(item, {
           cls: 'ok',
           label: 'Same-size rescued',
-          text: `Rescue kept exact dimensions at ${originalW} × ${originalH} and fit under ${settings.targetKb} KB.`
+          text: `Rescue kept exact dimensions at ${rescue.width} × ${rescue.height} and fit under ${settings.targetKb} KB.`
         });
-      } else {
+        return true;
+      }
+
+      // No same-size result can hit target. Keep the closest normal-pass same-size result already saved on the item.
+      if (item.result && item.result.url) {
         setCardState(item, {
           cls: 'warn',
           label: 'Closest same-size result',
-          text: `Could not reach ${settings.targetKb} KB without changing dimensions. Saved closest ${originalW} × ${originalH} result instead.`
+          text: `Could not reach ${settings.targetKb} KB without changing dimensions. Saved the closest same-size result instead.`
+        });
+      } else {
+        setCardState(item, {
+          cls: 'bad',
+          label: 'Over target',
+          text: `No usable same-size JPEG result could be created for this file.`
         });
       }
+      return false;
+    }
 
-      updateCardMetrics(item);
-      return item;
+    async function compressItem(item, settings) {
+      const originalSize = item.file.size;
+
+      if (originalSize <= settings.skipBelowBytes) {
+        if (item.result && item.result.url && item.result.url.startsWith('blob:')) {
+          URL.revokeObjectURL(item.result.url);
+        }
+        const originalUrl = URL.createObjectURL(item.file);
+        item.result = {
+          blob: item.file,
+          filename: buildOutputFilename(item.file.name, settings.prefixText, settings.nameSuffix, false),
+          quality: 'Original',
+          blur: 0,
+          ok: originalSize <= settings.targetBytes,
+          url: originalUrl,
+          mode: 'skipped',
+          distance: Math.abs(settings.targetBytes - originalSize)
+        };
+        item.card.querySelector('.resultSize').textContent = `${bytesToKb(originalSize)} KB`;
+        item.card.querySelector('.quality').textContent = '—';
+        item.card.querySelector('.blur').textContent = '0';
+        item.card.querySelector('.mode').textContent = 'Skipped';
+        item.card.querySelector('.dims').textContent = 'Original';
+        item.card.querySelector('.distance').textContent = `${bytesToKb(item.result.distance)} KB`;
+        item.downloadBtn.disabled = false;
+        setCardState(item, {
+          cls: 'skip',
+          label: 'Skipped',
+          text: `Already at or below ${settings.skipBelowKb} KB. Original file preserved with no recompression.`
+        });
+        return;
+      }
+
+      setCardState(item, { cls: 'warn', label: 'Working', text: 'Testing quality levels to find the closest result under your target...' });
+
+      const img = await loadImage(item.file, item);
+      item.card.querySelector('.dims').textContent = `${img.naturalWidth} × ${img.naturalHeight}`;
+
+      const baseCanvas = renderToCanvas(img, settings.bgMode);
+      const { candidates, smallestOver } = await scanCandidates(baseCanvas, settings);
+      const chosen = chooseBestCandidate(candidates, settings);
+
+      if (!chosen) {
+        const wantsRescue = settings.rescueMode === 'auto' ? true : false;
+
+        if (wantsRescue) {
+          setCardState(item, { cls: 'warn', label: 'Rescue pass', text: 'Trying extra same-size compression passes while preserving exact dimensions...' });
+          const rescueCandidates = await scanResizeRescueCandidates(baseCanvas, settings);
+          const rescue = chooseBestRescueCandidate(rescueCandidates);
+
+          if (rescue) {
+            const url = URL.createObjectURL(rescue.blob);
+            if (item.result && item.result.url && item.result.url.startsWith('blob:')) URL.revokeObjectURL(item.result.url);
+
+            item.result = {
+              blob: rescue.blob,
+              filename: buildOutputFilename(item.file.name, settings.prefixText, settings.nameSuffix, true),
+              quality: rescue.quality,
+              blur: rescue.blur,
+              scale: rescue.scale,
+              ok: true,
+              url,
+              mode: 'rescue',
+              distance: rescue.distanceToTarget
+            };
+            item.card.querySelector('.resultSize').textContent = `${bytesToKb(rescue.blob.size)} KB`;
+            item.card.querySelector('.quality').textContent = `Q${rescue.quality}`;
+            item.card.querySelector('.blur').textContent = `${rescue.blur ? rescue.blur.toFixed(2) + 'px' : '0'}`;
+            item.card.querySelector('.mode').textContent = `Same-size rescue`;
+            item.card.querySelector('.dims').textContent = `${rescue.width} × ${rescue.height}`;
+            item.card.querySelector('.distance').textContent = `${bytesToKb(rescue.distanceToTarget)} KB`;
+            item.downloadBtn.disabled = false;
+            setCardState(item, {
+              cls: 'ok',
+              label: 'Same-size rescued',
+              text: `Normal compression could not hit ${settings.targetKb} KB, so this used the least destructive next step: ${Math.round(rescue.scale * 100)}% scale at Q${rescue.quality}${rescue.blur ? ` with ${rescue.blur.toFixed(2)}px blur` : ''}.`
+            });
+            return;
+          }
+        }
+
+        const fallback = smallestOver;
+        if (!fallback) {
+          item.downloadBtn.disabled = true;
+          setCardState(item, { cls: 'bad', label: 'Error', text: 'No usable JPEG result could be created for this file.' });
+          return;
+        }
+        const url = URL.createObjectURL(fallback.blob);
+        if (item.result && item.result.url && item.result.url.startsWith('blob:')) URL.revokeObjectURL(item.result.url);
+
+        item.result = {
+          blob: fallback.blob,
+          filename: buildOutputFilename(item.file.name, settings.prefixText, settings.nameSuffix, true),
+          quality: fallback.quality,
+          blur: fallback.blur,
+          ok: false,
+          url,
+          mode: 'compressed',
+          distance: fallback.distanceToTarget
+        };
+        item.card.querySelector('.resultSize').textContent = `${bytesToKb(fallback.blob.size)} KB`;
+        item.card.querySelector('.quality').textContent = `Q${fallback.quality}`;
+        item.card.querySelector('.blur').textContent = `${fallback.blur ? fallback.blur.toFixed(2) + 'px' : '0'}`;
+        item.card.querySelector('.mode').textContent = 'Compressed';
+        item.card.querySelector('.distance').textContent = `${bytesToKb(fallback.distanceToTarget)} KB`;
+        item.downloadBtn.disabled = false;
+        if (settings.rescueMode === 'ask') {
+          setCardState(item, {
+            cls: 'warn',
+            label: 'Needs rescue',
+            text: `Normal pass finished over ${settings.targetKb} KB. This file is waiting for the batch rescue decision after the other files finish.`
+          });
+        } else {
+          setCardState(item, {
+            cls: 'bad',
+            label: 'Over target',
+            text: wantsRescue ? `Even the same-size rescue pass could not fit under ${settings.targetKb} KB. Saved the closest oversized result instead.` : `No tested version fit under ${settings.targetKb} KB. Rescue pass was skipped, so the closest oversized result was saved instead.`
+          });
+        }
+        return;
+      }
+
+      const url = URL.createObjectURL(chosen.blob);
+      if (item.result && item.result.url && item.result.url.startsWith('blob:')) URL.revokeObjectURL(item.result.url);
+
+      item.result = {
+        blob: chosen.blob,
+        filename: buildOutputFilename(item.file.name, settings.prefixText, settings.nameSuffix, true),
+        quality: chosen.quality,
+        blur: chosen.blur,
+        ok: true,
+        url,
+        mode: 'compressed',
+        distance: chosen.distanceToTarget
+      };
+      item.card.querySelector('.resultSize').textContent = `${bytesToKb(chosen.blob.size)} KB`;
+      item.card.querySelector('.quality').textContent = `Q${chosen.quality}`;
+      item.card.querySelector('.blur').textContent = `${chosen.blur ? chosen.blur.toFixed(2) + 'px' : '0'}`;
+      item.card.querySelector('.mode').textContent = 'Compressed';
+      item.card.querySelector('.distance').textContent = `${bytesToKb(chosen.distanceToTarget)} KB`;
+      item.downloadBtn.disabled = false;
+
+      const bandText = chosen.blob.size >= settings.preferredFloorBytes ? 'inside your preferred range' : 'below your preferred floor but still the closest valid result';
+      setCardState(item, {
+        cls: 'ok',
+        label: 'Compressed',
+        text: `Saved as JPEG at Q${chosen.quality}${chosen.blur ? ` with ${chosen.blur.toFixed(2)}px blur` : ''}, ${bandText}.`
+      });
+    }
+
+    async function processAll() {
+      if (!items.length) return;
+      const settings = getSettings();
+      compressBtn.disabled = true;
+      downloadAllBtn.disabled = true;
+      downloadZipBtn.disabled = true;
+
+      const normalLog = [];
+      setBatchProgress({
+        active: true,
+        title: 'Normal pass',
+        current: 0,
+        total: items.length,
+        detail: 'Running the normal compression pass on every file first...',
+        files: []
+      });
+
+      for (let index = 0; index < items.length; index++) {
+        const item = items[index];
+        setBatchProgress({
+          active: true,
+          title: 'Normal pass',
+          current: index,
+          total: items.length,
+          detail: `Processing ${item.file.name}`,
+          files: normalLog
+        });
+
+        try {
+          await compressItem(item, settings);
+          normalLog.push(item.result ? `${item.file.name} → ${item.result.mode}` : `${item.file.name} → no result`);
+        } catch (err) {
+          normalLog.push(`${item.file.name} → error`);
+          setCardState(item, {
+            cls: 'bad',
+            label: 'Error',
+            text: err && err.message ? err.message : 'Something went wrong with this file.'
+          });
+        }
+
+        setBatchProgress({
+          active: true,
+          title: 'Normal pass',
+          current: index + 1,
+          total: items.length,
+          detail: `Finished ${item.file.name}`,
+          files: normalLog
+        });
+        refreshStats();
+      }
+
+      if (settings.rescueMode === 'ask') {
+        const leftovers = getLeftoverRescueItems();
+        if (leftovers.length) {
+          setBatchProgress({
+            active: true,
+            title: 'Rescue decision',
+            current: items.length,
+            total: items.length,
+            detail: `${leftovers.length} file(s) still need rescue. Waiting for one batch decision...`,
+            files: leftovers.map(item => item.file.name)
+          });
+
+          const rescueChoice = askBatchRescueChoice(leftovers, settings);
+
+          if (rescueChoice === 'skip') {
+            for (const item of leftovers) {
+              setCardState(item, {
+                cls: 'bad',
+                label: 'Over target',
+                text: `No tested version fit under ${settings.targetKb} KB. Batch rescue was skipped, so the closest oversized result was saved instead.`
+              });
+            }
+            refreshStats();
+            finishBatchProgress('Same-size rescue was skipped. Finished files are ready to download, including skipped originals.');
+          }
+
+          if (rescueChoice === 'all') {
+            const rescueLog = [];
+            setBatchProgress({
+              active: true,
+              title: 'Rescue pass',
+              current: 0,
+              total: leftovers.length,
+              detail: 'Running same-size rescue on all leftover files...',
+              files: leftovers.map(item => item.file.name)
+            });
+
+            for (let index = 0; index < leftovers.length; index++) {
+              const item = leftovers[index];
+              setBatchProgress({
+                active: true,
+                title: 'Rescue pass',
+                current: index,
+                total: leftovers.length,
+                detail: `Same-size rescuing ${item.file.name}`,
+                files: rescueLog.length ? rescueLog : leftovers.map(x => x.file.name)
+              });
+
+              try {
+                await runRescueForItem(item, settings);
+                rescueLog.push(`${item.file.name} → ${item.result && item.result.ok ? 'rescued' : 'closest saved'}`);
+              } catch (err) {
+                rescueLog.push(`${item.file.name} → rescue error`);
+                setCardState(item, {
+                  cls: 'bad',
+                  label: 'Rescue error',
+                  text: err && err.message ? err.message : 'Something went wrong during the rescue pass.'
+                });
+              }
+
+              setBatchProgress({
+                active: true,
+                title: 'Rescue pass',
+                current: index + 1,
+                total: leftovers.length,
+                detail: `Finished rescue for ${item.file.name}`,
+                files: rescueLog
+              });
+              refreshStats();
+            }
+            finishBatchProgress('Same-size rescue pass complete. Finished files are ready to download, including skipped originals.');
+          }
+        } else {
+          finishBatchProgress('Normal pass complete. No rescue pass was needed. Finished files are ready to download, including skipped originals.');
+        }
+      } else {
+        finishBatchProgress(settings.rescueMode === 'auto'
+          ? 'Auto rescue flow complete. Finished files are ready to download, including skipped originals.'
+          : 'Normal pass complete. Finished files are ready to download, including skipped originals.');
+      }
+
+      compressBtn.disabled = false;
+      refreshStats();
     }
 
     function triggerDownload(url, filename) {
@@ -1188,4 +1432,31 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     setupGuidanceControls();
     refreshStats();
   </script>
+
+<script>
+/* shrinktopiaUploadRepair_v31_8 */
+(function(){
+  function ready(fn){ if(document.readyState === "loading") document.addEventListener("DOMContentLoaded", fn); else fn(); }
+  ready(function(){
+    const pickBtn = document.getElementById("pickBtn");
+    const fileInput = document.getElementById("fileInput");
+    const dropzone = document.getElementById("dropzone");
+    if (pickBtn && fileInput) pickBtn.onclick = function(e){ e.preventDefault(); fileInput.click(); };
+    if (fileInput && typeof addFiles === "function") fileInput.onchange = async function(e){ await addFiles(e.target.files); fileInput.value = ""; };
+    if (dropzone) {
+      dropzone.onclick = function(){ if(fileInput) fileInput.click(); };
+      ["dragenter","dragover"].forEach(function(evt){
+        dropzone.addEventListener(evt, function(e){ e.preventDefault(); e.stopPropagation(); dropzone.classList.add("drag"); });
+      });
+      ["dragleave","drop"].forEach(function(evt){
+        dropzone.addEventListener(evt, function(e){ e.preventDefault(); e.stopPropagation(); dropzone.classList.remove("drag"); });
+      });
+      if (typeof addFiles === "function") {
+        dropzone.addEventListener("drop", async function(e){ await addFiles(e.dataTransfer.files); });
+      }
+    }
+  });
+})();
+</script>
+
 </body></html>
