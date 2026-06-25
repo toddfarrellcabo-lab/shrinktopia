@@ -3,7 +3,7 @@
 <html lang="en"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
   
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Shrinktopia 30 - Rescue Resize</title>
+  <title>Shrinktopia 31 - Batch Rescue Resize</title>
   <style>
     :root {
       --bg: linear-gradient(180deg, #f7f8fc 0%, #eef2ff 40%, #f7f8fc 100%);
@@ -20,6 +20,11 @@
       --bad: #c62828;
       --skip: #1565c0;
       --shadow: 0 10px 28px rgba(53, 59, 107, .10);
+
+      /* HERO IMAGE PLACEHOLDER
+         Replace none with url("your-1700x700-hero-image.jpg") when you have one.
+         The image will center on the top of the hero area. Leave as none to use the default Shrinktopia background. */
+      --custom-hero-image: none;
     }
     * { box-sizing: border-box; }
     body {
@@ -42,10 +47,14 @@
       overflow: hidden;
       padding: 28px;
       margin-bottom: 18px;
-      background:
+      background-image:
+        var(--custom-hero-image),
         radial-gradient(circle at 12% 18%, rgba(57,199,234,.18), transparent 24%),
         radial-gradient(circle at 88% 12%, rgba(141,59,145,.16), transparent 22%),
         linear-gradient(135deg, rgba(255,255,255,.97), rgba(247,250,255,.92));
+      background-position: center top, center, center, center;
+      background-size: min(100%, 1700px) auto, auto, auto, auto;
+      background-repeat: no-repeat;
     }
     .hero h1 {
       margin: 0 0 6px 0;
@@ -280,8 +289,8 @@
       <div class="skyline"></div>
       <div class="hero-inner">
         <div class="hero-copy">
-          <div class="version">SHRINKTOPIA 30 · guided quality controls + rescue</div>
-          <h1>Shrinktopia 30</h1>
+          <div class="version">SHRINKTOPIA 31 · batch rescue + hero image placeholder</div>
+          <h1>Shrinktopia 31</h1>
           <p class="tagline">Big creative. Tiny files. City-speed compression with a Sparklight glow.</p>
           <p>This version keeps the exact controls, but explains what each quality setting means while it works toward your hard size target.</p>
           <p>It includes live quality labels, auto-rescue options, optional <strong>prefix</strong>, optional <strong>suffix</strong>, optional <strong>blur help</strong>, and <strong>ZIP download</strong>.</p>
@@ -357,11 +366,11 @@
         <div class="field">
           <label for="rescueMode">When target cannot be reached</label>
           <select id="rescueMode">
-            <option value="ask" selected="">Ask before rescue</option>
+            <option value="ask" selected="">Ask after normal pass</option>
             <option value="auto">Auto rescue</option>
             <option value="stop">Stop and report failure</option>
           </select>
-          <div class="hint">Rescue tries resize steps only after normal compression misses.</div>
+          <div class="hint">Normal compression runs first. Then you can rescue all leftovers, ask one by one, or skip rescue.</div>
         </div>
         <div class="field slider-field">
           <label for="minScalePercent">Minimum Resize Allowed <span id="minScaleLabel" class="live-label">95% • Virtually Invisible</span></label>
@@ -576,7 +585,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       if (scaleLabelEl) scaleLabelEl.textContent = `${scale}% • ${scaleLabel(scale)}`;
 
       if (strategy) {
-        const rescueText = rescue === 'auto' ? 'Auto rescue enabled' : rescue === 'ask' ? 'Ask before rescue' : 'Stop if target is missed';
+        const rescueText = rescue === 'auto' ? 'Auto rescue enabled' : rescue === 'ask' ? 'Ask after normal pass' : 'Stop if target is missed';
         const blurText = blurMode === 'off' ? 'Blur disabled' : `Blur allowed up to ${Number(blur).toFixed(2)}px (${blurLabel(blur)})`;
         const expected = Number(minQ) >= 60 ? 'Very Good to Excellent' : Number(minQ) >= 40 ? 'Good' : Number(minQ) >= 20 ? 'Aggressive but usable' : 'Extreme / visible loss likely';
         strategy.innerHTML = `✓ Target ${floor}–${target} KB<br>✓ Quality ${maxQ} → ${minQ} (${qualityLabel(minQ)} floor)<br>✓ ${blurText}<br>✓ ${rescueText}${rescue === 'stop' ? '' : `<br>✓ Resize down to ${scale}% max (${scaleLabel(scale)})`}<br><strong>Expected Visual Quality:</strong> ${expected}`;
@@ -829,6 +838,68 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       return pool[0];
     }
 
+
+    function getLeftoverRescueItems() {
+      return items.filter(item => item.result && item.result.ok === false && item.result.mode === 'compressed');
+    }
+
+    function askBatchRescueChoice(leftovers, settings) {
+      if (!leftovers.length) return 'skip';
+      const msg = `${leftovers.length} file(s) are still over the ${settings.targetKb} KB hard target after the normal pass.\n\nType A to rescue ALL leftovers without more prompts.\nType O to ask one by one.\nType S or Cancel to skip rescue.\n\nRescue tries small resize steps and keeps the largest dimensions / highest JPEG quality that fit.`;
+      const answer = window.prompt(msg, 'A');
+      if (!answer) return 'skip';
+      const choice = String(answer).trim().toLowerCase();
+      if (choice === 'a' || choice === 'all') return 'all';
+      if (choice === 'o' || choice === 'one' || choice === 'one by one' || choice === '1') return 'one';
+      return 'skip';
+    }
+
+    async function runRescueForItem(item, settings) {
+      setCardState(item, { cls: 'warn', label: 'Rescue pass', text: 'Trying small resize steps to find the best-looking version under the hard target...' });
+
+      const img = await loadImage(item.file, item);
+      const baseCanvas = renderToCanvas(img, settings.bgMode);
+      const rescueCandidates = await scanResizeRescueCandidates(baseCanvas, settings);
+      const rescue = chooseBestRescueCandidate(rescueCandidates);
+
+      if (rescue) {
+        const url = URL.createObjectURL(rescue.blob);
+        if (item.result && item.result.url && item.result.url.startsWith('blob:')) URL.revokeObjectURL(item.result.url);
+
+        item.result = {
+          blob: rescue.blob,
+          filename: buildOutputFilename(item.file.name, settings.prefixText, settings.nameSuffix, true),
+          quality: rescue.quality,
+          blur: rescue.blur,
+          scale: rescue.scale,
+          ok: true,
+          url,
+          mode: 'rescue',
+          distance: rescue.distanceToTarget
+        };
+        item.card.querySelector('.resultSize').textContent = `${bytesToKb(rescue.blob.size)} KB`;
+        item.card.querySelector('.quality').textContent = `Q${rescue.quality}`;
+        item.card.querySelector('.blur').textContent = `${rescue.blur ? rescue.blur.toFixed(2) + 'px' : '0'}`;
+        item.card.querySelector('.mode').textContent = `Rescue ${Math.round(rescue.scale * 100)}%`;
+        item.card.querySelector('.dims').textContent = `${rescue.width} × ${rescue.height}`;
+        item.card.querySelector('.distance').textContent = `${bytesToKb(rescue.distanceToTarget)} KB`;
+        item.downloadBtn.disabled = false;
+        setCardState(item, {
+          cls: 'ok',
+          label: 'Rescued',
+          text: `Normal compression could not hit ${settings.targetKb} KB, so batch rescue used the least destructive next step: ${Math.round(rescue.scale * 100)}% scale at Q${rescue.quality}${rescue.blur ? ` with ${rescue.blur.toFixed(2)}px blur` : ''}.`
+        });
+        return true;
+      }
+
+      setCardState(item, {
+        cls: 'bad',
+        label: 'Over target',
+        text: `Even the resize rescue pass could not fit under ${settings.targetKb} KB. Saved the closest oversized result instead.`
+      });
+      return false;
+    }
+
     async function compressItem(item, settings) {
       const originalSize = item.file.size;
 
@@ -872,7 +943,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       const chosen = chooseBestCandidate(candidates, settings);
 
       if (!chosen) {
-        const wantsRescue = settings.rescueMode === 'auto' ? true : (settings.rescueMode === 'ask' ? confirmRescuePass(item, settings) : false);
+        const wantsRescue = settings.rescueMode === 'auto' ? true : false;
 
         if (wantsRescue) {
           setCardState(item, { cls: 'warn', label: 'Rescue pass', text: 'Trying small resize steps to find the best-looking version under the hard target...' });
@@ -935,11 +1006,19 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         item.card.querySelector('.mode').textContent = 'Compressed';
         item.card.querySelector('.distance').textContent = `${bytesToKb(fallback.distanceToTarget)} KB`;
         item.downloadBtn.disabled = false;
-        setCardState(item, {
-          cls: 'bad',
-          label: 'Over target',
-          text: wantsRescue ? `Even the resize rescue pass could not fit under ${settings.targetKb} KB. Saved the closest oversized result instead.` : `No tested version fit under ${settings.targetKb} KB. Rescue pass was skipped, so the closest oversized result was saved instead.`
-        });
+        if (settings.rescueMode === 'ask') {
+          setCardState(item, {
+            cls: 'warn',
+            label: 'Needs rescue',
+            text: `Normal pass finished over ${settings.targetKb} KB. This file is waiting for the batch rescue decision after the other files finish.`
+          });
+        } else {
+          setCardState(item, {
+            cls: 'bad',
+            label: 'Over target',
+            text: wantsRescue ? `Even the resize rescue pass could not fit under ${settings.targetKb} KB. Saved the closest oversized result instead.` : `No tested version fit under ${settings.targetKb} KB. Rescue pass was skipped, so the closest oversized result was saved instead.`
+          });
+        }
         return;
       }
 
@@ -989,6 +1068,44 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           });
         }
         refreshStats();
+      }
+
+      if (settings.rescueMode === 'ask') {
+        const leftovers = getLeftoverRescueItems();
+        const rescueChoice = askBatchRescueChoice(leftovers, settings);
+        if (rescueChoice === 'skip') {
+          for (const item of leftovers) {
+            setCardState(item, {
+              cls: 'bad',
+              label: 'Over target',
+              text: `No tested version fit under ${settings.targetKb} KB. Batch rescue was skipped, so the closest oversized result was saved instead.`
+            });
+          }
+          refreshStats();
+        }
+        if (rescueChoice === 'all' || rescueChoice === 'one') {
+          for (const item of leftovers) {
+            const shouldRescue = rescueChoice === 'all' ? true : confirmRescuePass(item, settings);
+            if (!shouldRescue) {
+              setCardState(item, {
+                cls: 'bad',
+                label: 'Over target',
+                text: `No tested version fit under ${settings.targetKb} KB. Rescue pass was skipped for this file, so the closest oversized result was saved instead.`
+              });
+              continue;
+            }
+            try {
+              await runRescueForItem(item, settings);
+            } catch (err) {
+              setCardState(item, {
+                cls: 'bad',
+                label: 'Rescue error',
+                text: err && err.message ? err.message : 'Something went wrong during the rescue pass.'
+              });
+            }
+            refreshStats();
+          }
+        }
       }
 
       compressBtn.disabled = false;
@@ -1073,5 +1190,4 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     refreshStats();
   </script>
 
-
-<div data-lastpass-root="" style="position: absolute !important; top: 0px !important; left: 0px !important; height: 0px !important; width: 0px !important; display: initial !important;"><template shadowrootmode="closed"><div style="position: absolute; height: 100vh; width: 100vw; z-index: 2147483647; border-radius: 4px; top: 0px; left: 0px; max-height: 0px; max-width: 280px; min-width: auto;"><iframe data-lastpass-infield="true" allow="clipboard-write" src="chrome-extension://hdokiejnpimakedhajhdlcegeplioahd/webclient-infield.html" style="border-width: medium; border-style: none; border-color: currentcolor; border-image: initial; height: 100%; width: 100%;"></iframe></div></template></div></body></html>
+</body></html>
