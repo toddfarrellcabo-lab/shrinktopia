@@ -3,7 +3,7 @@
 <html lang="en"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
   
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Shrinktopia 31.1 - One-Prompt Batch Rescue</title>
+  <title>Shrinktopia</title>
   <style>
     :root {
       --bg: linear-gradient(180deg, #f7f8fc 0%, #eef2ff 40%, #f7f8fc 100%);
@@ -304,6 +304,71 @@
       background: var(--card);
     }
 
+
+    .batch-progress {
+      display: none;
+      margin-top: 14px;
+      border: 1px solid rgba(141,59,145,.18);
+      border-radius: 14px;
+      padding: 12px;
+      background: linear-gradient(135deg, rgba(141,59,145,.06), rgba(57,199,234,.08));
+    }
+    .batch-progress.active { display: block; }
+    .batch-progress-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    .batch-progress-title {
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+    .batch-progress-count {
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .batch-progress-bar {
+      height: 12px;
+      border-radius: 999px;
+      overflow: hidden;
+      background: rgba(255,255,255,.75);
+      border: 1px solid var(--border);
+    }
+    .batch-progress-fill {
+      width: 0%;
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent), var(--accent3));
+      transition: width .18s ease;
+    }
+    .batch-progress-detail {
+      margin-top: 8px;
+      font-size: 12px;
+      color: #34425f;
+      line-height: 1.35;
+    }
+    .batch-progress-files {
+      margin-top: 8px;
+      font-size: 11px;
+      color: var(--muted);
+      line-height: 1.35;
+      max-height: 66px;
+      overflow: auto;
+    }
+    .app-version {
+      margin-top: 16px;
+      text-align: center;
+      font-size: 11px;
+      color: var(--muted);
+      opacity: .8;
+    }
+
 </style>
 </head>
 <body>
@@ -313,8 +378,7 @@
       <div class="skyline"></div>
       <div class="hero-inner">
         <div class="hero-copy">
-          <div class="version">SHRINKTOPIA 31.1 · one-prompt batch rescue + Hero.png</div>
-          <h1>Shrinktopia 31</h1>
+          <h1>Shrinktopia</h1>
           <p class="tagline">Big creative. Tiny files. City-speed compression with a Sparklight glow.</p>
           <p>This version keeps the exact controls, but explains what each quality setting means while it works toward your hard size target.</p>
           <p>It includes live quality labels, auto-rescue options, optional <strong>prefix</strong>, optional <strong>suffix</strong>, optional <strong>blur help</strong>, and <strong>ZIP download</strong>.</p>
@@ -426,8 +490,8 @@
       <div class="btn-row">
         <button class="primary" id="pickBtn">Choose files</button>
         <button class="soft" id="compressBtn" disabled="">Process all</button>
-        <button id="downloadAllBtn" disabled="">Download all individually</button>
-        <button id="downloadZipBtn" disabled="">Download ZIP</button>
+        <button id="downloadAllBtn" disabled="" title="Includes skipped originals too">Download all individually</button>
+        <button id="downloadZipBtn" disabled="" title="Includes skipped originals too">Download ZIP</button>
         <button id="clearBtn">Clear list</button>
       </div>
 
@@ -444,9 +508,23 @@
         <div>Under hard target: <strong id="okCount">0</strong></div>
       </div>
 
-      <div class="footer-note">
-        ZIP download avoids the browser asking for permission on every file. Prefix and suffix can both be left blank. The styling leans into a bright animated city vibe with Sparklight color energy.
+      <div id="batchProgress" class="batch-progress" aria-live="polite">
+        <div class="batch-progress-top">
+          <div id="batchProgressTitle" class="batch-progress-title">Ready</div>
+          <div id="batchProgressCount" class="batch-progress-count">0 / 0</div>
+        </div>
+        <div class="batch-progress-bar">
+          <div id="batchProgressFill" class="batch-progress-fill"></div>
+        </div>
+        <div id="batchProgressDetail" class="batch-progress-detail">Waiting for files.</div>
+        <div id="batchProgressFiles" class="batch-progress-files"></div>
       </div>
+
+
+      <div class="footer-note">
+        ZIP download includes every finished file, including files that were skipped because they were already small enough. Prefix and suffix can both be left blank.
+      </div>
+      <div class="app-version">Shrinktopia v31.6</div>
     </div>
 
     <div class="grid" id="results"></div>
@@ -482,6 +560,12 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     const fileCountEl = document.getElementById('fileCount');
     const doneCountEl = document.getElementById('doneCount');
     const okCountEl = document.getElementById('okCount');
+    const batchProgress = document.getElementById('batchProgress');
+    const batchProgressTitle = document.getElementById('batchProgressTitle');
+    const batchProgressCount = document.getElementById('batchProgressCount');
+    const batchProgressFill = document.getElementById('batchProgressFill');
+    const batchProgressDetail = document.getElementById('batchProgressDetail');
+    const batchProgressFiles = document.getElementById('batchProgressFiles');
     const compressedCountEl = document.getElementById('compressedCount');
     const skippedCountEl = document.getElementById('skippedCount');
 
@@ -627,6 +711,41 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         if (el) el.addEventListener('change', updateGuidance);
       });
       updateGuidance();
+    }
+
+
+    function setBatchProgress({ active = true, title = 'Working', current = 0, total = 0, detail = '', files = [] } = {}) {
+      if (!batchProgress) return;
+      batchProgress.classList.toggle('active', !!active);
+      if (batchProgressTitle) batchProgressTitle.textContent = title;
+      if (batchProgressCount) batchProgressCount.textContent = total ? `${current} / ${total}` : '';
+      const pct = total ? Math.max(0, Math.min(100, Math.round((current / total) * 100))) : 0;
+      if (batchProgressFill) batchProgressFill.style.width = `${pct}%`;
+      if (batchProgressDetail) batchProgressDetail.textContent = detail || '';
+      if (batchProgressFiles) {
+        const list = Array.isArray(files) ? files : [];
+        batchProgressFiles.innerHTML = list.slice(-8).map(name => `• ${escapeHtml(name)}`).join('<br>');
+      }
+    }
+
+    function finishBatchProgress(detail) {
+      setBatchProgress({
+        active: true,
+        title: 'Batch complete',
+        current: items.filter(item => item.result).length,
+        total: items.length,
+        detail: detail || 'All possible files are ready to download. ZIP includes skipped originals too.',
+        files: items.filter(item => item.result).map(item => item.result.filename || item.file.name)
+      });
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
     }
 
     function refreshStats() {
@@ -1080,46 +1199,129 @@ This is the only rescue prompt you should see for this batch.`;
       downloadAllBtn.disabled = true;
       downloadZipBtn.disabled = true;
 
-      for (const item of items) {
+      const normalLog = [];
+      setBatchProgress({
+        active: true,
+        title: 'Normal pass',
+        current: 0,
+        total: items.length,
+        detail: 'Running the normal compression pass on every file first...',
+        files: []
+      });
+
+      for (let index = 0; index < items.length; index++) {
+        const item = items[index];
+        setBatchProgress({
+          active: true,
+          title: 'Normal pass',
+          current: index,
+          total: items.length,
+          detail: `Processing ${item.file.name}`,
+          files: normalLog
+        });
+
         try {
           await compressItem(item, settings);
+          normalLog.push(item.result ? `${item.file.name} → ${item.result.mode}` : `${item.file.name} → no result`);
         } catch (err) {
+          normalLog.push(`${item.file.name} → error`);
           setCardState(item, {
             cls: 'bad',
             label: 'Error',
             text: err && err.message ? err.message : 'Something went wrong with this file.'
           });
         }
+
+        setBatchProgress({
+          active: true,
+          title: 'Normal pass',
+          current: index + 1,
+          total: items.length,
+          detail: `Finished ${item.file.name}`,
+          files: normalLog
+        });
         refreshStats();
       }
 
       if (settings.rescueMode === 'ask') {
         const leftovers = getLeftoverRescueItems();
-        const rescueChoice = askBatchRescueChoice(leftovers, settings);
-        if (rescueChoice === 'skip') {
-          for (const item of leftovers) {
-            setCardState(item, {
-              cls: 'bad',
-              label: 'Over target',
-              text: `No tested version fit under ${settings.targetKb} KB. Batch rescue was skipped, so the closest oversized result was saved instead.`
-            });
-          }
-          refreshStats();
-        }
-        if (rescueChoice === 'all') {
-          for (const item of leftovers) {
-            try {
-              await runRescueForItem(item, settings);
-            } catch (err) {
+        if (leftovers.length) {
+          setBatchProgress({
+            active: true,
+            title: 'Rescue decision',
+            current: items.length,
+            total: items.length,
+            detail: `${leftovers.length} file(s) still need rescue. Waiting for one batch decision...`,
+            files: leftovers.map(item => item.file.name)
+          });
+
+          const rescueChoice = askBatchRescueChoice(leftovers, settings);
+
+          if (rescueChoice === 'skip') {
+            for (const item of leftovers) {
               setCardState(item, {
                 cls: 'bad',
-                label: 'Rescue error',
-                text: err && err.message ? err.message : 'Something went wrong during the rescue pass.'
+                label: 'Over target',
+                text: `No tested version fit under ${settings.targetKb} KB. Batch rescue was skipped, so the closest oversized result was saved instead.`
               });
             }
             refreshStats();
+            finishBatchProgress('Rescue was skipped. Finished files are ready to download, including skipped originals.');
           }
+
+          if (rescueChoice === 'all') {
+            const rescueLog = [];
+            setBatchProgress({
+              active: true,
+              title: 'Rescue pass',
+              current: 0,
+              total: leftovers.length,
+              detail: 'Running rescue on all leftover files...',
+              files: leftovers.map(item => item.file.name)
+            });
+
+            for (let index = 0; index < leftovers.length; index++) {
+              const item = leftovers[index];
+              setBatchProgress({
+                active: true,
+                title: 'Rescue pass',
+                current: index,
+                total: leftovers.length,
+                detail: `Rescuing ${item.file.name}`,
+                files: rescueLog.length ? rescueLog : leftovers.map(x => x.file.name)
+              });
+
+              try {
+                await runRescueForItem(item, settings);
+                rescueLog.push(`${item.file.name} → ${item.result && item.result.ok ? 'rescued' : 'closest saved'}`);
+              } catch (err) {
+                rescueLog.push(`${item.file.name} → rescue error`);
+                setCardState(item, {
+                  cls: 'bad',
+                  label: 'Rescue error',
+                  text: err && err.message ? err.message : 'Something went wrong during the rescue pass.'
+                });
+              }
+
+              setBatchProgress({
+                active: true,
+                title: 'Rescue pass',
+                current: index + 1,
+                total: leftovers.length,
+                detail: `Finished rescue for ${item.file.name}`,
+                files: rescueLog
+              });
+              refreshStats();
+            }
+            finishBatchProgress('Rescue pass complete. Finished files are ready to download, including skipped originals.');
+          }
+        } else {
+          finishBatchProgress('Normal pass complete. No rescue pass was needed. Finished files are ready to download, including skipped originals.');
         }
+      } else {
+        finishBatchProgress(settings.rescueMode === 'auto'
+          ? 'Auto rescue flow complete. Finished files are ready to download, including skipped originals.'
+          : 'Normal pass complete. Finished files are ready to download, including skipped originals.');
       }
 
       compressBtn.disabled = false;
@@ -1203,44 +1405,4 @@ This is the only rescue prompt you should see for this batch.`;
     setupGuidanceControls();
     refreshStats();
   </script>
-
-
-<script>
-(function(){
-  window.shrinktopiaSingleRescueDecision = window.shrinktopiaSingleRescueDecision || {
-    asked: false,
-    choice: null
-  };
-
-  const nativeConfirm = window.confirm.bind(window);
-  window.confirm = function(message){
-    const msg = String(message || "");
-    if (msg.includes("Run the next-step rescue pass?") || (msg.includes("still over the") && msg.includes("hard target"))) {
-      if (!window.shrinktopiaSingleRescueDecision.asked) {
-        window.shrinktopiaSingleRescueDecision.asked = true;
-        const useAll = nativeConfirm(
-          "Some files are still over the hard target after the normal pass.\n\n" +
-          "Run rescue pass for ALL leftover files?\n\n" +
-          "OK = rescue all leftovers\n" +
-          "Cancel = skip rescue for all leftovers"
-        );
-        window.shrinktopiaSingleRescueDecision.choice = useAll ? "all" : "skip";
-      }
-      return window.shrinktopiaSingleRescueDecision.choice === "all";
-    }
-    return nativeConfirm(message);
-  };
-})();
-</script>
-
-
-<script>
-document.addEventListener("click", function(e){
-  if (e.target && e.target.id === "compressBtn" && window.shrinktopiaSingleRescueDecision) {
-    window.shrinktopiaSingleRescueDecision.asked = false;
-    window.shrinktopiaSingleRescueDecision.choice = null;
-  }
-}, true); // reset shrinktopia rescue decision per run
-</script>
-
 </body></html>
