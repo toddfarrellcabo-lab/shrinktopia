@@ -282,10 +282,25 @@
       .file-card { grid-template-columns: 1fr; }
       .thumb { width: 100%; height: 190px; }
     }
-  </style>
+  
+    .hero-image{
+      display:block;
+      width:100%;
+      max-width:1700px;
+      aspect-ratio:1700/700;
+      object-fit:cover;
+      object-position:center;
+      margin:0 auto 18px auto;
+      border-radius:14px;
+      border:1px solid var(--border);
+      box-shadow:var(--shadow);
+    }
+
+</style>
 </head>
 <body>
   <div class="wrap">
+    <img id="heroImage" class="hero-image" src="images/Hero.png" alt="Hero Banner" onerror="this.style.display='none';">
     <div class="hero">
       <div class="skyline"></div>
       <div class="hero-inner">
@@ -1180,5 +1195,44 @@ This is the only rescue prompt you should see for this batch.`;
     setupGuidanceControls();
     refreshStats();
   </script>
+
+
+<script>
+(function(){
+  window.shrinktopiaSingleRescueDecision = window.shrinktopiaSingleRescueDecision || {
+    asked: false,
+    choice: null
+  };
+
+  const nativeConfirm = window.confirm.bind(window);
+  window.confirm = function(message){
+    const msg = String(message || "");
+    if (msg.includes("Run the next-step rescue pass?") || (msg.includes("still over the") && msg.includes("hard target"))) {
+      if (!window.shrinktopiaSingleRescueDecision.asked) {
+        window.shrinktopiaSingleRescueDecision.asked = true;
+        const useAll = nativeConfirm(
+          "Some files are still over the hard target after the normal pass.\n\n" +
+          "Run rescue pass for ALL leftover files?\n\n" +
+          "OK = rescue all leftovers\n" +
+          "Cancel = skip rescue for all leftovers"
+        );
+        window.shrinktopiaSingleRescueDecision.choice = useAll ? "all" : "skip";
+      }
+      return window.shrinktopiaSingleRescueDecision.choice === "all";
+    }
+    return nativeConfirm(message);
+  };
+})();
+</script>
+
+
+<script>
+document.addEventListener("click", function(e){
+  if (e.target && e.target.id === "compressBtn" && window.shrinktopiaSingleRescueDecision) {
+    window.shrinktopiaSingleRescueDecision.asked = false;
+    window.shrinktopiaSingleRescueDecision.choice = null;
+  }
+}, true); // reset shrinktopia rescue decision per run
+</script>
 
 </body></html>
